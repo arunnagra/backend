@@ -373,13 +373,17 @@ io.on("connection", (socket) => {
     });
 
     
-    socket.on("quiz_answer", ({ roomId, answer }) => {
-        io.to(roomId).emit("quiz_answer", answer);
+    socket.on("quiz_answer", (payload) => {
+        // forward the full payload so clients receive finalScore and player info
+        if (!payload || !payload.roomId) return;
+        io.to(payload.roomId).emit("quiz_answer", payload);
     });
 
     
-    socket.on("snake_roll", ({ roomId, dice }) => {
-        io.to(roomId).emit("snake_roll", dice);
+    socket.on("snake_roll", (payload) => {
+        // payload can include { roomId, dice, position, username }
+        if (!payload || !payload.roomId) return;
+        io.to(payload.roomId).emit("snake_roll", payload);
     });
 
     
