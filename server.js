@@ -18,6 +18,10 @@ dotenv.config();
 
 const app = express();
 
+mongoose.connect(process.env.MONGO_URI)
+    .then(() => console.log("MongoDB Connected"))
+    .catch(err => console.log(err));
+
 
 app.use(cors({
     origin: "http://localhost:3000",
@@ -35,12 +39,6 @@ app.use("/api/match", matchRoutes);
 app.get("/", (req, res) => {
     res.send("GameSphere 2.0 API is running");
 });
-
-
-mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log("MongoDB Connected"))
-    .catch(err => console.log(err));
-
 
 const server = http.createServer(app);
 const PORT = process.env.PORT || 5000;
