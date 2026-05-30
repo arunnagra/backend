@@ -1,44 +1,17 @@
-const express = require("express");
-const mongoose = require("mongoose");
-const dotenv = require("dotenv");
-const cors = require("cors");
 const http = require("http");
 const { Server } = require("socket.io");
-
-const roomRoutes = require("./routes/roomRoutes");
-const authRoutes = require("./routes/authRoutes");
-const profileRoutes = require("./routes/profileRoutes");
-const leaderboardRoutes = require("./routes/leaderboardRoutes");
-const matchRoutes = require("./routes/matchRoutes");
+const app = require("./app");
 
 const Match = require("./models/Match");
 const User = require("./models/User");
 
-dotenv.config();
-
-const app = express();
-
-mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log("MongoDB Connected"))
-    .catch(err => console.log(err));
-
-
-app.use(cors({
-    origin: "http://localhost:3000",
-    credentials: true,
-}));
-
-app.use(express.json());
-
-
-app.use("/api/auth", authRoutes);
-app.use("/api/rooms", roomRoutes);
-app.use("/api/profile", profileRoutes);
-app.use("/api/leaderboard", leaderboardRoutes);
-app.use("/api/match", matchRoutes);
-app.get("/", (req, res) => {
-    res.send("GameSphere 2.0 API is running");
-});
+const allowedOrigins = [
+    process.env.CLIENT_URL,
+    process.env.FRONTEND_URL,
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    /^https:\/\/.*\.vercel\.app$/,
+].filter(Boolean);
 
 const server = http.createServer(app);
 const PORT = process.env.PORT || 5000;
@@ -46,7 +19,7 @@ const PORT = process.env.PORT || 5000;
 
 const io = new Server(server, {
     cors: {
-        origin: "http://localhost:3000",
+        origin: allowedOrigins,
         methods: ["GET", "POST"],
         credentials: true,
     },
@@ -63,15 +36,15 @@ io.on("connection", (socket) => {
     console.log("User Connected:", socket.id);
 
     
-    socket.on("create_room", ({ username, game }, callback) => {
+    socket.on("create_room", ({ roomId, username, game }, callback) => {
 
-        const roomId = Math.random()
+        const resolvedRoomId = roomId || Math.random()
             .toString(36)
             .substring(2, 7)
             .toUpperCase();
 
-        lobbyRooms[roomId] = {
-            roomId,
+        lobbyRooms[resolvedRoomId] = {
+            roomId: resolvedRoomId,
             game: game,
             hostId: socket.id,
             players: [
@@ -83,18 +56,18 @@ io.on("connection", (socket) => {
             gameStarted: false,
         };
 
-        socket.join(roomId);
+        socket.join(resolvedRoomId);
 
         callback({
-            roomId,
+            roomId: resolvedRoomId,
             game,
             host: true,
-            players: lobbyRooms[roomId].players,
+            players: lobbyRooms[resolvedRoomId].players,
         });
 
-        io.to(roomId).emit(
+        io.to(resolvedRoomId).emit(
             "room_update",
-            lobbyRooms[roomId]
+            lobbyRooms[resolvedRoomId]
         );
     });
 
@@ -381,6 +354,10 @@ io.on("connection", (socket) => {
         }
 
         io.to(roomId).emit("roomData", room);
+    });
+
+    socket.on("match_recorded", (payload) => {
+        io.emit("match_recorded", payload);
     });
 
     

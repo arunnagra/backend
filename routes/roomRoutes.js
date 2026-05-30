@@ -18,6 +18,8 @@ router.post("/create", authMiddleware, async (req, res) => {
 
     try {
 
+        const { game = "tic-tac-toe" } = req.body;
+
         const roomId = generateRoomId();
 
         const room = await Room.create({
@@ -26,12 +28,16 @@ router.post("/create", authMiddleware, async (req, res) => {
 
             players: [req.user.id],
 
+            game,
+
             status: "waiting",
         });
 
+        const populatedRoom = await Room.findById(room._id).populate("players");
+
         res.status(201).json({
             msg: "Room created",
-            room,
+            room: populatedRoom,
         });
 
     } catch (error) {
@@ -64,13 +70,21 @@ router.post("/join", authMiddleware, async (req, res) => {
             });
         }
 
-        room.players.push(req.user.id);
+        const alreadyJoined = room.players.some(
+            (playerId) => String(playerId) === String(req.user.id)
+        );
 
-        room.status = "playing";
+        if (!alreadyJoined) {
+            room.players.push(req.user.id);
+        }
+
+        room.status = "waiting";
 
         await room.save();
 
-        res.json(room);
+        const populatedRoom = await Room.findById(room._id).populate("players");
+
+        res.json(populatedRoom);
 
     } catch (error) {
 
@@ -94,6 +108,44 @@ router.get("/:roomId", authMiddleware, async (req, res) => {
 
         res.status(500).json({
             msg: error.message
+        });
+    }
+});
+
+router.post("/:roomId/start", authMiddleware, async (req, res) => {
+    try {
+        const room = await Room.findOne({
+            roomId: req.params.roomId,
+        });
+
+        if (!room) {
+            return res.status(404).json({
+                msg: "Room not found",
+            });
+        }
+
+        const isHost =
+            room.players.length > 0 &&
+            String(room.players[0]) === String(req.user.id);
+
+        if (!isHost) {
+            return res.status(403).json({
+                msg: "Only the host can start the room",
+            });
+        }
+
+        room.status = "playing";
+        await room.save();
+
+        const populatedRoom = await Room.findById(room._id).populate("players");
+
+        res.json({
+            msg: "Room started",
+            room: populatedRoom,
+        });
+    } catch (error) {
+        res.status(500).json({
+            msg: error.message,
         });
     }
 });

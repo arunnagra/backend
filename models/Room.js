@@ -15,6 +15,11 @@ const roomSchema = new mongoose.Schema({
         }
     ],
 
+    game: {
+        type: String,
+        default: "tic-tac-toe",
+    },
+
     status: {
         type: String,
         default: "waiting",
