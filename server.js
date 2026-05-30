@@ -32,6 +32,9 @@ app.use("/api/rooms", roomRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api/leaderboard", leaderboardRoutes);
 app.use("/api/match", matchRoutes);
+app.get("/", (req, res) => {
+    res.send("GameSphere 2.0 API is running");
+});
 
 
 mongoose.connect(process.env.MONGO_URI)
