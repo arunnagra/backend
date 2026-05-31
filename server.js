@@ -26,16 +26,16 @@ const io = new Server(server, {
 });
 
 
-const lobbyRooms = {};   
-const gameRooms = {};    
-const chessRooms = {};   
+const lobbyRooms = {};
+const gameRooms = {};
+const chessRooms = {};
 
 
 io.on("connection", (socket) => {
 
     console.log("User Connected:", socket.id);
 
-    
+
     socket.on("create_room", ({ roomId, username, game }, callback) => {
 
         const resolvedRoomId = roomId || Math.random()
@@ -71,7 +71,7 @@ io.on("connection", (socket) => {
         );
     });
 
-    
+
     socket.on("join_room", ({ roomId, username }, callback) => {
 
         console.log("================================");
@@ -114,27 +114,20 @@ io.on("connection", (socket) => {
         );
 
         if (existingBySocket) {
-            
+
         } else if (existingByUsername) {
-            
+
             existingByUsername.socketId = socket.id;
         } else {
-            
+
             room.players.push({
                 socketId: socket.id,
                 username,
             });
         }
 
-        console.log(
-            "PLAYER JOINED:",
-            username
-        );
-
-        console.log(
-            "TOTAL PLAYERS:",
-            room.players.length
-        );
+        console.log("PLAYER JOINED:", username);
+        console.log("TOTAL PLAYERS:", room.players.length);
 
         socket.join(roomId);
 
@@ -148,18 +141,13 @@ io.on("connection", (socket) => {
             });
         }
 
-        io.to(roomId).emit(
-            "room_update",
-            room
-        );
+        io.to(roomId).emit("room_update", room);
 
         console.log("ROOM UPDATE SENT");
         console.log("================================");
     });
 
-    
-    
-    
+
     socket.on("start_game", ({ roomId }) => {
 
         const room = lobbyRooms[roomId];
@@ -180,6 +168,7 @@ io.on("connection", (socket) => {
                     board: Array(9).fill(""),
                     turn: "X",
                     winner: "",
+                    symbolToUser: {},
                 };
 
                 break;
@@ -235,6 +224,7 @@ io.on("connection", (socket) => {
                     board: Array(9).fill(""),
                     turn: "X",
                     winner: "",
+                    symbolToUser: {},
                 };
         }
 
@@ -244,19 +234,50 @@ io.on("connection", (socket) => {
         });
     });
 
-    
-    
-    
+
     socket.on("makeMove", async ({ roomId, index, symbol }) => {
 
-        const room = gameRooms[roomId];
-        if (!room) return;
+        // The match may be started via the REST route (/api/rooms/:id/start),
+        // which does NOT emit the socket "start_game" event, so the game
+        // room may not exist yet. Lazily create it from the lobby room so
+        // moves always register.
+        let room = gameRooms[roomId];
+
+        if (!room) {
+            const lobby = lobbyRooms[roomId];
+            room = gameRooms[roomId] = {
+                game: lobby?.game || "tic-tac-toe",
+                players: lobby?.players || [],
+                board: Array(9).fill(""),
+                turn: "X",
+                winner: "",
+                symbolToUser: {},
+            };
+        }
+
+        // Keep the player list fresh from the lobby so both usernames are
+        // available when the result is recorded.
+        if (lobbyRooms[roomId]?.players?.length) {
+            room.players = lobbyRooms[roomId].players;
+        }
 
         if (room.turn !== symbol) return;
         if (room.board[index] !== "") return;
 
         room.board[index] = symbol;
         room.turn = symbol === "X" ? "O" : "X";
+
+        // Learn which username plays which symbol from the moves they
+        // actually make. The server never assigns symbols, so this is the
+        // only reliable source for attributing the win to the right player.
+        // Resolving the username here (not the socket id) survives reconnects.
+        if (!room.symbolToUser) room.symbolToUser = {};
+        const mover = (room.players || []).find(
+            (p) => p.socketId === socket.id
+        );
+        if (mover) {
+            room.symbolToUser[symbol] = mover.username;
+        }
 
         const winner = checkWinner(room.board);
 
@@ -268,56 +289,57 @@ io.on("connection", (socket) => {
             room.winner = "DRAW";
         }
 
-        
+
         if ((room.winner === "DRAW" || room.winner) && !room.recorded) {
             try {
-                
+                // In-memory guard: record each finished game exactly once.
                 room.recorded = true;
 
+                const players = room.players || [];
+
                 if (room.winner === "DRAW") {
-                    const [p1, p2] = room.players || [];
+
+                    const [p1, p2] = players;
+
                     if (p1 && p2) {
-                        
-                        const match = new Match({
-                            roomId,
-                            players: [],
-                            gameType: room.game || "Unknown",
-                        });
-                        
                         const player1 = await User.findOne({ username: p1.username });
                         const player2 = await User.findOne({ username: p2.username });
 
-                        if (player1) {
-                            player1.matchesPlayed = (player1.matchesPlayed || 0) + 1;
-                            await player1.save();
-                        }
-                        if (player2) {
-                            player2.matchesPlayed = (player2.matchesPlayed || 0) + 1;
-                            await player2.save();
-                        }
+                        const match = new Match({
+                            roomId,
+                            players: [player1?._id, player2?._id].filter(Boolean),
+                            // no winner field -> treated as a draw everywhere
+                            gameType: room.game || "Unknown",
+                        });
 
-                        
-                        match.players = [player1?._id, player2?._id].filter(Boolean);
                         await match.save();
-                        
+
                         io.emit("match_recorded", {
                             roomId,
                             winner: null,
                             draw: true,
                         });
                     }
+
                 } else {
-                    
-                    const players = room.players || [];
-                    const playerX = players[0];
-                    const playerO = players[1];
 
-                    const winnerPlayer = room.winner === "X" ? playerX : playerO;
-                    const loserPlayer = room.winner === "X" ? playerO : playerX;
+                    // Map the winning/losing SYMBOL to a username via the
+                    // moves played, with a positional fallback if a player
+                    // somehow never moved.
+                    const loserSymbol = room.winner === "X" ? "O" : "X";
+                    const map = room.symbolToUser || {};
 
-                    if (winnerPlayer && loserPlayer) {
-                        const winnerUser = await User.findOne({ username: winnerPlayer.username });
-                        const loserUser = await User.findOne({ username: loserPlayer.username });
+                    const winnerUsername =
+                        map[room.winner] ||
+                        players[room.winner === "X" ? 0 : 1]?.username;
+
+                    const loserUsername =
+                        map[loserSymbol] ||
+                        players[loserSymbol === "X" ? 0 : 1]?.username;
+
+                    if (winnerUsername && loserUsername) {
+                        const winnerUser = await User.findOne({ username: winnerUsername });
+                        const loserUser = await User.findOne({ username: loserUsername });
 
                         const match = new Match({
                             roomId,
@@ -326,21 +348,8 @@ io.on("connection", (socket) => {
                             gameType: room.game || "Unknown",
                         });
 
-                        if (winnerUser) {
-                            winnerUser.wins = (winnerUser.wins || 0) + 1;
-                            winnerUser.matchesPlayed = (winnerUser.matchesPlayed || 0) + 1;
-                            await winnerUser.save();
-                        }
-
-                        if (loserUser) {
-                            loserUser.losses = (loserUser.losses || 0) + 1;
-                            loserUser.matchesPlayed = (loserUser.matchesPlayed || 0) + 1;
-                            await loserUser.save();
-                        }
-
                         await match.save();
 
-                        
                         io.emit("match_recorded", {
                             roomId,
                             winner: winnerUser?.username || null,
@@ -360,40 +369,36 @@ io.on("connection", (socket) => {
         io.emit("match_recorded", payload);
     });
 
-    
-    
-    
+
     socket.on("chess_move", ({ roomId, move }) => {
         socket.to(roomId).emit("chess_move", move);
     });
 
-    
+
     socket.on("memory_flip", ({ roomId, card }) => {
         io.to(roomId).emit("memory_flip", card);
     });
 
-    
+
     socket.on("quiz_answer", (payload) => {
         // forward the full payload so clients receive finalScore and player info
         if (!payload || !payload.roomId) return;
         io.to(payload.roomId).emit("quiz_answer", payload);
     });
 
-    
+
     socket.on("snake_roll", (payload) => {
         // payload can include { roomId, dice, position, username }
         if (!payload || !payload.roomId) return;
         io.to(payload.roomId).emit("snake_roll", payload);
     });
 
-    
-    
-    
+
     socket.on("disconnect", () => {
 
         console.log("Disconnected:", socket.id);
 
-        
+
         for (const roomId in lobbyRooms) {
 
             lobbyRooms[roomId].players =
@@ -408,7 +413,7 @@ io.on("connection", (socket) => {
             }
         }
 
-        
+
         for (const roomId in gameRooms) {
             gameRooms[roomId].players =
                 gameRooms[roomId].players?.filter(
@@ -419,8 +424,6 @@ io.on("connection", (socket) => {
     });
 
 });
-
-
 
 
 function checkWinner(board) {
