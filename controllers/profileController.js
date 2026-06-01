@@ -13,10 +13,6 @@ const getProfile = async (req, res) => {
       });
     }
 
-    // Include matches where the user is a listed player OR the recorded
-    // winner. The winner check catches legacy records saved with an
-    // empty/partial players array, keeping this in sync with the
-    // leaderboard controller.
     const matches = await Match.find({
       $or: [{ players: userId }, { winner: userId }],
     })
