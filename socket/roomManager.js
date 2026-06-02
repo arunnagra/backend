@@ -1,9 +1,6 @@
 const rooms = {};
 
 
-
-
-
 const createRoom = (roomId) => {
   if (!rooms[roomId]) {
     rooms[roomId] = {
@@ -25,9 +22,6 @@ const createRoom = (roomId) => {
     };
   }
 };
-
-
-
 
 
 const addPlayer = (roomId, player) => {
@@ -68,17 +62,11 @@ const addPlayer = (roomId, player) => {
 };
 
 
-
-
-
 const startGame = (roomId) => {
   if (rooms[roomId]) {
     rooms[roomId].gameStarted = true;
   }
 };
-
-
-
 
 
 const getPlayers = (roomId) => {
@@ -88,16 +76,9 @@ const getPlayers = (roomId) => {
 };
 
 
-
-
-
 const getRoom = (roomId) => {
   return rooms[roomId] || null;
 };
-
-
-
-
 
 const updateBoard = (
   roomId,
@@ -109,17 +90,11 @@ const updateBoard = (
 };
 
 
-
-
-
 const getBoard = (roomId) => {
   return rooms[roomId]
     ? rooms[roomId].board
     : [];
 };
-
-
-
 
 
 const updateTurn = (
@@ -132,10 +107,6 @@ const updateTurn = (
   }
 };
 
-
-
-
-
 const getCurrentTurn = (
   roomId
 ) => {
@@ -143,10 +114,6 @@ const getCurrentTurn = (
     ? rooms[roomId].currentTurn
     : null;
 };
-
-
-
-
 
 const setWinner = (
   roomId,
@@ -158,10 +125,6 @@ const setWinner = (
   }
 };
 
-
-
-
-
 const getWinner = (
   roomId
 ) => {
@@ -169,10 +132,6 @@ const getWinner = (
     ? rooms[roomId].winner
     : null;
 };
-
-
-
-
 
 const removePlayer = (
   socketId
@@ -204,9 +163,6 @@ const removePlayer = (
     }
   }
 };
-
-
-
 
 
 const findPlayerRoom = (
