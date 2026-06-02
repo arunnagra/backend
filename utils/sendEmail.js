@@ -33,10 +33,10 @@ const sendEmail = async (email, otp) => {
     };
 
     await transporter.sendMail(mailOptions);
-    console.log("Email Sent");
+    console.log("Email Sent to:", email);
   } catch (error) {
-    console.error("OTP email send failed:", error.message || error);
-    throw new Error("Unable to send OTP email. Please check email credentials and Gmail settings.");
+    console.error("OTP email send failed:", error);
+    throw error;
   }
 };
 

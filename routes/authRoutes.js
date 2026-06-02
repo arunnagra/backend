@@ -68,6 +68,7 @@ router.post("/register", async (req, res) => {
       email,
       password: hashedPassword,
       otp,
+      expiresAt: Date.now() + 5 * 60 * 1000,
     };
 
     await sendEmail(email, otp);
@@ -77,9 +78,10 @@ router.post("/register", async (req, res) => {
       msg: "OTP sent to email",
     });
   } catch (error) {
+    console.error("Register error:", error);
     res.status(500).json({
       success: false,
-      msg: error.message,
+      msg: error.message || "Failed to send OTP",
     });
   }
 });
@@ -97,7 +99,7 @@ router.post(
       const storedData =
         registerOtpStore[email];
 
-      if (!storedData) {
+      if (!storedData || Date.now() > storedData.expiresAt) {
         return res.status(400).json({
           success: false,
           msg: "OTP expired",

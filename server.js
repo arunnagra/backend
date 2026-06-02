@@ -9,8 +9,7 @@ const allowedOrigins = [
     process.env.CLIENT_URL,
     process.env.FRONTEND_URL,
     "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    /^https:\/\/.*\.vercel\.app$/,
+    "https://frontend-y5ln.onrender.com",
 ].filter(Boolean);
 
 const server = http.createServer(app);
