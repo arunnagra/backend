@@ -1,37 +1,29 @@
-const nodemailer = require("nodemailer");
+const sgMail = require("@sendgrid/mail");
 
 const sendEmail = async (email, otp) => {
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    throw new Error("Email credentials are not configured. Set EMAIL_USER and EMAIL_PASS in .env.");
+  if (!process.env.SENDGRID_API_KEY) {
+    throw new Error("SENDGRID_API_KEY is not configured. Add it to .env");
   }
 
   try {
-    const transporter = nodemailer.createTransport({
-      host: "smtp.gmail.com",
-      port: 465,
-      secure: true,
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
-    });
+    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-    await transporter.verify();
-
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
+    const msg = {
       to: email,
-      subject: "OTP Verification",
+      from: process.env.SENDGRID_FROM_EMAIL || "noreply@gamesphere.com",
+      subject: "GameSphere - OTP Verification",
       html: `
         <h2>Your OTP Code</h2>
-        <h1>${otp}</h1>
+        <p>Enter this code to verify your email:</p>
+        <h1 style="color: #007bff;">${otp}</h1>
+        <p>This code expires in 5 minutes.</p>
       `,
     };
 
-    await transporter.sendMail(mailOptions);
-    console.log("Email Sent to:", email);
+    await sgMail.send(msg);
+    console.log("Email sent to:", email);
   } catch (error) {
-    console.error("OTP email send failed:", error);
+    console.error("SendGrid email error:", error);
     throw error;
   }
 };
