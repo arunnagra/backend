@@ -75,6 +75,7 @@ exports.signup = async (req, res) => {
       msg: "OTP sent to email",
     });
   } catch (error) {
+
     res.status(500).json({
       success: false,
       msg: error.message,
