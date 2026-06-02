@@ -3,15 +3,15 @@ const mongoose = require("mongoose");
 const dotenv = require("dotenv");
 const cors = require("cors");
 
+dotenv.config();
+
+const app = express();
+
 const roomRoutes = require("./routes/roomRoutes");
 const authRoutes = require("./routes/authRoutes");
 const profileRoutes = require("./routes/profileRoutes");
 const leaderboardRoutes = require("./routes/leaderboardRoutes");
 const matchRoutes = require("./routes/matchRoutes");
-
-dotenv.config();
-
-const app = express();
 
 const allowedOrigins = [
   process.env.CLIENT_URL,
@@ -29,21 +29,19 @@ app.use(
 
 app.use(express.json());
 
+app.get("/", (req, res) => {
+  res.send("GameSphere API Running");
+});
+
 app.use("/api/auth", authRoutes);
 app.use("/api/rooms", roomRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api/leaderboard", leaderboardRoutes);
 app.use("/api/match", matchRoutes);
 
-app.get("/", (req, res) => {
-  res.send("GameSphere 2.0 API is running");
-});
-
-if (process.env.MONGO_URI && mongoose.connection.readyState === 0) {
-  mongoose
-    .connect(process.env.MONGO_URI)
-    .then(() => console.log("MongoDB Connected"))
-    .catch((err) => console.log(err));
-}
+mongoose
+  .connect(process.env.MONGO_URI)
+  .then(() => console.log("MongoDB Connected"))
+  .catch((err) => console.error("MongoDB Error:", err));
 
 module.exports = app;
