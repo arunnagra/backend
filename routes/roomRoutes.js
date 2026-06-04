@@ -94,6 +94,22 @@ router.post("/join", authMiddleware, async (req, res) => {
     }
 });
 
+router.get("/available", authMiddleware, async (req, res) => {
+    try {
+        const rooms = await Room.find({
+            status: "waiting",
+            $or: [{ players: { $size: 0 } }, { players: { $size: 1 } }],
+        })
+            .populate("players", "username")
+            .sort({ createdAt: -1 });
+
+        res.json(rooms);
+    } catch (error) {
+        console.error("Available rooms error:", error.message);
+        res.status(500).json({ msg: error.message });
+    }
+});
+
 router.get("/:roomId", authMiddleware, async (req, res) => {
 
     try {

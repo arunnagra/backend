@@ -29,6 +29,8 @@ const io = new Server(server, {
 const lobbyRooms = {};
 const gameRooms = {};
 const chessRooms = {};
+const quizRooms = {};
+const snakeRooms = {};
 
 
 io.on("connection", (socket) => {
@@ -135,30 +137,49 @@ io.on("connection", (socket) => {
 
         socket.join(roomId);
 
-        // Chess-specific logic
+        // Game-specific join logic
         if (room.game === "chess") {
             const chessRoom = chessRooms[roomId];
             if (chessRoom) {
                 const playerIndex = room.players.findIndex(p => p.username === username);
                 const color = playerIndex === 0 ? "white" : playerIndex === 1 ? "black" : "spectator";
-
                 if (typeof callback === "function") {
-                    callback({
-                        roomId,
-                        color,
-                        gameState: getChessGameState(chessRoom),
-                    });
+                    callback({ roomId, color, gameState: getChessGameState(chessRoom) });
                 }
+            }
+        } else if (room.game === "memory-match" && gameRooms[roomId]?.cards) {
+            const gr = gameRooms[roomId];
+            socket.emit("memory_game_start", {
+                cards: gr.cards,
+                players: gr.players,
+                currentPlayer: gr.players[gr.currentTurn]?.username,
+                scores: gr.scores,
+                matched: gr.matched || [],
+            });
+            if (typeof callback === "function") {
+                callback({ roomId, host: false, hostId: room.hostId, players: room.players, game: room.game });
+            }
+        } else if (room.game === "snake-ladder" && snakeRooms[roomId]) {
+            const sr = snakeRooms[roomId];
+            socket.emit("snake_game_start", {
+                players: sr.players,
+                positions: sr.positions,
+                currentPlayer: sr.players[sr.currentTurn]?.username,
+            });
+            if (typeof callback === "function") {
+                callback({ roomId, host: false, hostId: room.hostId, players: room.players, game: room.game });
+            }
+        } else if (room.game === "quiz-battle" && quizRooms[roomId]) {
+            socket.emit("quiz_start", {
+                players: quizRooms[roomId].players,
+                scores: quizRooms[roomId].scores,
+            });
+            if (typeof callback === "function") {
+                callback({ roomId, host: false, hostId: room.hostId, players: room.players, game: room.game });
             }
         } else {
             if (typeof callback === "function") {
-                callback({
-                    roomId,
-                    host: false,
-                    hostId: room.hostId,
-                    players: room.players,
-                    game: room.game,
-                });
+                callback({ roomId, host: false, hostId: room.hostId, players: room.players, game: room.game });
             }
         }
 
@@ -289,25 +310,29 @@ io.on("connection", (socket) => {
                 break;
 
             case "quiz-battle":
-
-                gameRooms[roomId] = {
-                    game: "quiz-battle",
+                quizRooms[roomId] = {
                     players: room.players,
-                    currentQuestion: 0,
                     scores: {},
+                    finished: {},
                 };
-
+                room.players.forEach(p => { quizRooms[roomId].scores[p.username] = 0; });
+                gameRooms[roomId] = { game: "quiz-battle", players: room.players };
+                io.to(roomId).emit("quiz_start", { players: room.players });
                 break;
 
             case "snake-ladder":
-
-                gameRooms[roomId] = {
-                    game: "snake-ladder",
+                snakeRooms[roomId] = {
                     players: room.players,
                     positions: {},
-                    turn: 0,
+                    currentTurn: 0,
                 };
-
+                room.players.forEach(p => { snakeRooms[roomId].positions[p.username] = 1; });
+                gameRooms[roomId] = { game: "snake-ladder", players: room.players };
+                io.to(roomId).emit("snake_game_start", {
+                    players: room.players,
+                    positions: snakeRooms[roomId].positions,
+                    currentPlayer: room.players[0]?.username,
+                });
                 break;
 
             default:
@@ -704,16 +729,57 @@ io.on("connection", (socket) => {
 
 
     socket.on("quiz_answer", (payload) => {
-        // forward the full payload so clients receive finalScore and player info
         if (!payload || !payload.roomId) return;
         io.to(payload.roomId).emit("quiz_answer", payload);
+
+        const qr = quizRooms[payload.roomId];
+        if (!qr) return;
+        if (payload.finalScore !== undefined) {
+            qr.finished[payload.player] = payload.finalScore;
+            qr.scores[payload.player] = payload.finalScore;
+            if (Object.keys(qr.finished).length >= qr.players.length) {
+                const entries = Object.entries(qr.finished);
+                let winner = "draw";
+                if (entries.length >= 2) {
+                    const [p1, s1] = entries[0];
+                    const [p2, s2] = entries[1];
+                    if (s1 > s2) winner = p1;
+                    else if (s2 > s1) winner = p2;
+                } else if (entries.length === 1) {
+                    winner = entries[0][0];
+                }
+                io.to(payload.roomId).emit("quiz_game_over", { scores: qr.finished, winner });
+            }
+        }
     });
 
-
     socket.on("snake_roll", (payload) => {
-        // payload can include { roomId, dice, position, username }
         if (!payload || !payload.roomId) return;
-        io.to(payload.roomId).emit("snake_roll", payload);
+        const sr = snakeRooms[payload.roomId];
+        if (!sr) {
+            io.to(payload.roomId).emit("snake_roll", payload);
+            return;
+        }
+        const currentPlayer = sr.players[sr.currentTurn];
+        if (currentPlayer?.username !== payload.username) return;
+
+        sr.positions[payload.username] = payload.position;
+        sr.currentTurn = (sr.currentTurn + 1) % sr.players.length;
+        const nextPlayer = sr.players[sr.currentTurn]?.username;
+
+        io.to(payload.roomId).emit("snake_roll", {
+            ...payload,
+            positions: { ...sr.positions },
+            currentPlayer: nextPlayer,
+        });
+
+        if (payload.position === 100) {
+            io.to(payload.roomId).emit("snake_game_over", {
+                winner: payload.username,
+                positions: sr.positions,
+            });
+            delete snakeRooms[payload.roomId];
+        }
     });
 
 

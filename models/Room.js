@@ -25,6 +25,6 @@ const roomSchema = new mongoose.Schema({
         default: "waiting",
     }
 
-});
+}, { timestamps: true });
 
 module.exports = mongoose.model("Room", roomSchema);
