@@ -49,21 +49,27 @@ const socketHandler = (io) => {
         return callback({ error: "Room not found" });
       }
 
-      const existingPlayer = room.players.find(
-        (player) => player.username === username
+      const normalizedUsername = username?.trim().toLowerCase();
+      const existingPlayerIndex = room.players.findIndex(
+        (player) =>
+          player.username?.trim().toLowerCase() ===
+          normalizedUsername
       );
 
-      if (room.gameStarted && !existingPlayer) {
+      if (room.gameStarted && existingPlayerIndex === -1) {
         return callback({ error: "Game already started" });
       }
 
-      if (!existingPlayer) {
+      let playerSymbol = "O";
+      if (existingPlayerIndex === -1) {
         room.players.push({
           socketId: socket.id,
-          username,
+          username: username.trim(),
         });
+        playerSymbol = room.players.length === 1 ? "X" : "O";
       } else {
-        existingPlayer.socketId = socket.id;
+        room.players[existingPlayerIndex].socketId = socket.id;
+        playerSymbol = existingPlayerIndex === 0 ? "X" : "O";
       }
 
       socket.join(roomId);
@@ -73,6 +79,7 @@ const socketHandler = (io) => {
         host: false,
         hostId: room.hostId,
         players: room.players,
+        symbol: playerSymbol,
       });
 
       if (room.gameStarted) {
@@ -95,8 +102,10 @@ const socketHandler = (io) => {
       room.gameStarted = true;
 
       io.to(roomId).emit("game_started", {
-        roomId
+        roomId,
       });
+
+      io.to(roomId).emit("roomData", room);
     });
 
     
