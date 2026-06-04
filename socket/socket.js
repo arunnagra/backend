@@ -49,14 +49,22 @@ const socketHandler = (io) => {
         return callback({ error: "Room not found" });
       }
 
-      if (room.gameStarted) {
+      const existingPlayer = room.players.find(
+        (player) => player.username === username
+      );
+
+      if (room.gameStarted && !existingPlayer) {
         return callback({ error: "Game already started" });
       }
 
-      room.players.push({
-        socketId: socket.id,
-        username
-      });
+      if (!existingPlayer) {
+        room.players.push({
+          socketId: socket.id,
+          username,
+        });
+      } else {
+        existingPlayer.socketId = socket.id;
+      }
 
       socket.join(roomId);
 
@@ -64,10 +72,14 @@ const socketHandler = (io) => {
         roomId,
         host: false,
         hostId: room.hostId,
-        players: room.players
+        players: room.players,
       });
 
-      io.to(roomId).emit("room_update", room);
+      if (room.gameStarted) {
+        socket.emit("roomData", room);
+      } else {
+        io.to(roomId).emit("room_update", room);
+      }
     });
 
     
