@@ -1,6 +1,7 @@
 const http = require("http");
 const { Server } = require("socket.io");
 const app = require("./app");
+const { Chess } = require("chess.js");
 
 const Match = require("./models/Match");
 const User = require("./models/User");
@@ -92,7 +93,15 @@ io.on("connection", (socket) => {
             return;
         }
 
-        if (room.gameStarted) {
+        const existingBySocket = room.players.find(
+            (player) => player.socketId === socket.id
+        );
+
+        const existingByUsername = room.players.find(
+            (player) => player.username === username
+        );
+
+        if (room.gameStarted && room.game !== "chess" && !existingBySocket && !existingByUsername) {
             console.log("GAME ALREADY STARTED");
 
             if (typeof callback === "function") {
@@ -104,13 +113,9 @@ io.on("connection", (socket) => {
             return;
         }
 
-        const existingBySocket = room.players.find(
-            (player) => player.socketId === socket.id
-        );
-
-        const existingByUsername = room.players.find(
-            (player) => player.username === username
-        );
+        if (existingByUsername && !existingBySocket) {
+            existingByUsername.socketId = socket.id;
+        }
 
         if (existingBySocket) {
 
@@ -130,14 +135,31 @@ io.on("connection", (socket) => {
 
         socket.join(roomId);
 
-        if (typeof callback === "function") {
-            callback({
-                roomId,
-                host: false,
-                hostId: room.hostId,
-                players: room.players,
-                game: room.game,
-            });
+        // Chess-specific logic
+        if (room.game === "chess") {
+            const chessRoom = chessRooms[roomId];
+            if (chessRoom) {
+                const playerIndex = room.players.findIndex(p => p.username === username);
+                const color = playerIndex === 0 ? "white" : playerIndex === 1 ? "black" : "spectator";
+
+                if (typeof callback === "function") {
+                    callback({
+                        roomId,
+                        color,
+                        gameState: getChessGameState(chessRoom),
+                    });
+                }
+            }
+        } else {
+            if (typeof callback === "function") {
+                callback({
+                    roomId,
+                    host: false,
+                    hostId: room.hostId,
+                    players: room.players,
+                    game: room.game,
+                });
+            }
         }
 
         io.to(roomId).emit("room_update", room);
@@ -147,20 +169,38 @@ io.on("connection", (socket) => {
     });
 
 
-    socket.on("start_game", ({ roomId }) => {
+    socket.on("start_game", ({ roomId }, callback) => {
+
+        console.log("========== START_GAME EVENT ==========");
+        console.log("START_GAME received for room:", roomId);
+        console.log("Available lobbies:", Object.keys(lobbyRooms));
+        console.log("Available game rooms:", Object.keys(gameRooms));
 
         const room = lobbyRooms[roomId];
 
-        if (!room) return;
+        if (!room) {
+            console.log("❌ Room not found for start_game");
+            if (callback) callback({ error: "Room not found" });
+            return;
+        }
 
-        if (socket.id !== room.hostId) return;
+        console.log("✅ Room found:", room.game);
+        console.log("Players:", room.players);
+
+        if (socket.id !== room.hostId) {
+            console.log("❌ Only host can start game. Socket ID:", socket.id, "Host ID:", room.hostId);
+            if (callback) callback({ error: "Only host can start game" });
+            return;
+        }
+
+        console.log("✅ Host verified. Starting game...");
 
         room.gameStarted = true;
 
         switch (room.game) {
 
             case "tic-tac-toe":
-
+                console.log("Initializing tic-tac-toe");
                 gameRooms[roomId] = {
                     game: "tic-tac-toe",
                     players: room.players,
@@ -174,22 +214,77 @@ io.on("connection", (socket) => {
 
             case "chess":
 
+                console.log("Initializing chess game for room:", roomId);
+                console.log("Players:", room.players);
+
                 chessRooms[roomId] = {
                     game: "chess",
                     players: room.players,
+                    gameState: {
+                        fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                        status: "active",
+                        turn: "white",
+                        white: room.players[0]?.username || null,
+                        black: room.players[1]?.username || null,
+                        moveHistory: [],
+                        isCheck: false,
+                        isCheckmate: false,
+                        winner: null,
+                        spectatorCount: 0,
+                        drawOffer: null,
+                    },
                 };
+
+                console.log("Chess game initialized:", chessRooms[roomId]);
+
+                io.to(roomId).emit("game_start", {
+                    white: room.players[0]?.username || null,
+                    black: room.players[1]?.username || null,
+                });
+
+                console.log("game_start event emitted");
 
                 break;
 
             case "memory-match":
 
+                console.log("🎮 Initializing MEMORY MATCH for room:", roomId);
+                const cardIcons = ["🎮", "🎯", "🚀", "⚽", "🏆", "🎲", "🧠", "🔥"];
+                const gameCards = [...cardIcons, ...cardIcons]
+                  .sort(() => Math.random() - 0.5)
+                  .map((icon, idx) => ({ id: idx, icon }));
+
+                console.log("Players for game:", room.players);
+
                 gameRooms[roomId] = {
                     game: "memory-match",
                     players: room.players,
-                    cards: [],
+                    cards: gameCards,
                     scores: {},
-                    turn: 0,
+                    matched: [],
+                    flipped: [],
+                    currentTurn: 0,
+                    gameState: "active",
+                    moves: 0,
                 };
+
+                room.players.forEach(p => {
+                  gameRooms[roomId].scores[p.username] = 0;
+                  console.log(`Score initialized for ${p.username}`);
+                });
+
+                console.log("Game room created:", gameRooms[roomId]);
+
+                const memoryGameData = {
+                    cards: gameCards,
+                    players: room.players.map(p => ({ username: p.username, score: 0 })),
+                    currentTurn: 0,
+                    currentPlayer: room.players[0]?.username,
+                };
+
+                console.log("Emitting memory_game_start:", memoryGameData);
+                io.to(roomId).emit("memory_game_start", memoryGameData);
+                console.log("✅ memory_game_start event emitted");
 
                 break;
 
@@ -231,6 +326,8 @@ io.on("connection", (socket) => {
             roomId,
             game: room.game,
         });
+
+        if (callback) callback({ success: true });
     });
 
 
@@ -369,13 +466,240 @@ io.on("connection", (socket) => {
     });
 
 
-    socket.on("chess_move", ({ roomId, move }) => {
-        socket.to(roomId).emit("chess_move", move);
+    socket.on("chess_move", ({ roomId, move }, callback) => {
+        console.log("Chess move received:", { roomId, move });
+
+        const chessRoom = chessRooms[roomId];
+        if (!chessRoom) {
+            console.log("Chess room not found:", roomId);
+            if (callback) callback({ error: "Chess room not found" });
+            return;
+        }
+
+        const gameState = chessRoom.gameState;
+        if (!gameState || gameState.status !== "active") {
+            console.log("Game not active:", { status: gameState?.status });
+            if (callback) callback({ error: "Game not active" });
+            return;
+        }
+
+        const chess = new Chess(gameState.fen);
+
+        try {
+            console.log("Attempting move:", move, "from FEN:", gameState.fen);
+            const moveResult = chess.move(move);
+
+            if (!moveResult) {
+                console.log("Invalid move:", move);
+                if (callback) callback({ error: "Invalid move" });
+                return;
+            }
+
+            console.log("Move successful:", moveResult);
+
+            gameState.fen = chess.fen();
+            gameState.moveHistory.push(moveResult);
+            gameState.turn = chess.turn() === "w" ? "white" : "black";
+            gameState.isCheck = chess.isCheck();
+            gameState.isCheckmate = chess.isCheckmate();
+
+            if (chess.isCheckmate()) {
+                gameState.winner = chess.turn() === "w" ? "black" : "white";
+                gameState.status = "finished";
+                console.log("Checkmate! Winner:", gameState.winner);
+                io.to(roomId).emit("game_over", {
+                    winner: gameState.winner,
+                    reason: "checkmate",
+                    gameState,
+                });
+            } else if (chess.isDraw()) {
+                gameState.winner = "draw";
+                gameState.status = "finished";
+                console.log("Draw!");
+                io.to(roomId).emit("game_over", {
+                    winner: "draw",
+                    reason: chess.isStalemate() ? "stalemate" : "draw",
+                    gameState,
+                });
+            } else {
+                console.log("Move processed, broadcasting to room:", roomId);
+                io.to(roomId).emit("chess_move", { gameState });
+            }
+
+            if (callback) callback({ success: true });
+        } catch (err) {
+            console.error("Error processing move:", err);
+            if (callback) callback({ error: err.message });
+        }
+    });
+
+    socket.on("resign", ({ roomId }) => {
+        const chessRoom = chessRooms[roomId];
+        if (!chessRoom) return;
+
+        const gameState = chessRoom.gameState;
+        const playerIndex = chessRoom.players.findIndex(p => p.socketId === socket.id);
+        const resigningColor = playerIndex === 0 ? "white" : "black";
+        const winner = resigningColor === "white" ? "black" : "white";
+
+        gameState.winner = winner;
+        gameState.status = "finished";
+
+        io.to(roomId).emit("game_over", {
+            winner,
+            reason: "resignation",
+            gameState,
+        });
+    });
+
+    socket.on("offer_draw", ({ roomId }) => {
+        const chessRoom = chessRooms[roomId];
+        if (!chessRoom) return;
+
+        const playerIndex = chessRoom.players.findIndex(p => p.socketId === socket.id);
+        const offeringColor = playerIndex === 0 ? "white" : "black";
+
+        chessRoom.gameState.drawOffer = offeringColor;
+        io.to(roomId).emit("draw_offered", { by: offeringColor });
+    });
+
+    socket.on("respond_draw", ({ roomId, accept }) => {
+        const chessRoom = chessRooms[roomId];
+        if (!chessRoom) return;
+
+        if (accept) {
+            chessRoom.gameState.winner = "draw";
+            chessRoom.gameState.status = "finished";
+            io.to(roomId).emit("game_over", {
+                winner: "draw",
+                reason: "draw_agreement",
+                gameState: chessRoom.gameState,
+            });
+        } else {
+            chessRoom.gameState.drawOffer = null;
+            io.to(roomId).emit("draw_offer_declined");
+        }
+    });
+
+    socket.on("request_rematch", ({ roomId }) => {
+        const chessRoom = chessRooms[roomId];
+        if (!chessRoom) return;
+
+        const lobby = lobbyRooms[roomId];
+        if (!lobby) return;
+
+        // Create new game
+        chessRoom.gameState = {
+            fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            status: "active",
+            turn: "white",
+            white: lobby.players[1]?.username || null,
+            black: lobby.players[0]?.username || null,
+            moveHistory: [],
+            isCheck: false,
+            isCheckmate: false,
+            winner: null,
+            spectatorCount: 0,
+            drawOffer: null,
+        };
+
+        io.to(roomId).emit("rematch_started", {
+            white: chessRoom.gameState.white,
+            black: chessRoom.gameState.black,
+            gameState: chessRoom.gameState,
+        });
     });
 
 
-    socket.on("memory_flip", ({ roomId, card }) => {
-        io.to(roomId).emit("memory_flip", card);
+    socket.on("memory_flip", ({ roomId, card, username }) => {
+        const room = gameRooms[roomId];
+        if (!room || room.game !== "memory-match") return;
+
+        console.log(`Memory flip from ${username} in room ${roomId}:`, card);
+
+        // Only allow current player to flip
+        const currentPlayer = room.players[room.currentTurn];
+        if (currentPlayer?.username !== username) {
+            console.log(`Not ${currentPlayer?.username}'s turn, ${username} tried to flip`);
+            return;
+        }
+
+        if (room.flipped.length >= 2) return;
+
+        // Add to flipped
+        room.flipped.push(card.index);
+
+        io.to(roomId).emit("memory_flip", {
+            index: card.index,
+            username,
+            flippedCount: room.flipped.length,
+        });
+
+        // Check if two cards are flipped
+        if (room.flipped.length === 2) {
+            const [idx1, idx2] = room.flipped;
+            const card1 = room.cards[idx1];
+            const card2 = room.cards[idx2];
+            const isMatch = card1.icon === card2.icon;
+
+            setTimeout(() => {
+                if (isMatch) {
+                    // Match found - add to matched and score point
+                    room.matched.push(idx1, idx2);
+                    room.scores[username]++;
+
+                    console.log(`Match found by ${username}! Score: ${room.scores[username]}`);
+
+                    io.to(roomId).emit("memory_match_found", {
+                        indices: [idx1, idx2],
+                        username,
+                        score: room.scores[username],
+                    });
+
+                    room.flipped = [];
+
+                    // Check if game over
+                    if (room.matched.length === room.cards.length) {
+                        const winner = Object.entries(room.scores).reduce((a, b) =>
+                            a[1] > b[1] ? a : b
+                        );
+
+                        io.to(roomId).emit("memory_game_over", {
+                            winner: winner[0],
+                            scores: room.scores,
+                        });
+
+                        room.gameState = "finished";
+                    } else {
+                        // Same player gets another turn
+                        io.to(roomId).emit("memory_turn_update", {
+                            currentPlayer: username,
+                            currentTurn: room.currentTurn,
+                            scores: room.scores,
+                        });
+                    }
+                } else {
+                    // No match - switch turn
+                    console.log(`No match. Switching turn.`);
+
+                    room.flipped = [];
+                    room.currentTurn = (room.currentTurn + 1) % room.players.length;
+                    const nextPlayer = room.players[room.currentTurn];
+
+                    io.to(roomId).emit("memory_no_match", {
+                        indices: [idx1, idx2],
+                        nextPlayer: nextPlayer?.username,
+                        nextTurn: room.currentTurn,
+                    });
+
+                    io.to(roomId).emit("memory_turn_update", {
+                        currentPlayer: nextPlayer?.username,
+                        currentTurn: room.currentTurn,
+                        scores: room.scores,
+                    });
+                }
+            }, 1000);
+        }
     });
 
 
@@ -407,6 +731,8 @@ io.on("connection", (socket) => {
 
             if (lobbyRooms[roomId].players.length === 0) {
                 delete lobbyRooms[roomId];
+                delete gameRooms[roomId];
+                delete chessRooms[roomId];
             } else {
                 io.to(roomId).emit("room_update", lobbyRooms[roomId]);
             }
@@ -418,6 +744,21 @@ io.on("connection", (socket) => {
                 gameRooms[roomId].players?.filter(
                     (p) => p.socketId !== socket.id
                 );
+        }
+
+        for (const roomId in chessRooms) {
+            chessRooms[roomId].players =
+                chessRooms[roomId].players?.filter(
+                    (p) => p.socketId !== socket.id
+                );
+
+            if (chessRooms[roomId].players?.length === 0) {
+                delete chessRooms[roomId];
+            } else if (chessRooms[roomId].gameState?.status === "active") {
+                io.to(roomId).emit("player_left", {
+                    color: chessRooms[roomId].players[0]?.socketId === socket.id ? "white" : "black"
+                });
+            }
         }
 
     });
@@ -445,6 +786,10 @@ function checkWinner(board) {
     }
 
     return null;
+}
+
+function getChessGameState(chessRoom) {
+    return chessRoom.gameState;
 }
 
 
