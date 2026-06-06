@@ -177,6 +177,11 @@ io.on("connection", (socket) => {
             if (typeof callback === "function") {
                 callback({ roomId, host: false, hostId: room.hostId, players: room.players, game: room.game });
             }
+        } else if (room.game === "tic-tac-toe" && gameRooms[roomId]) {
+            socket.emit("roomData", gameRooms[roomId]);
+            if (typeof callback === "function") {
+                callback({ roomId, host: false, hostId: room.hostId, players: room.players, game: room.game });
+            }
         } else {
             if (typeof callback === "function") {
                 callback({ roomId, host: false, hostId: room.hostId, players: room.players, game: room.game });
@@ -382,6 +387,8 @@ io.on("connection", (socket) => {
             room.players = lobbyRooms[roomId].players;
         }
 
+        if (room.winner) return;
+        if (index < 0 || index > 8 || !Number.isInteger(index)) return;
         if (room.turn !== symbol) return;
         if (room.board[index] !== "") return;
 
