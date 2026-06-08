@@ -56,7 +56,10 @@ const socketHandler = (io) => {
           normalizedUsername
       );
 
-      if (room.gameStarted && existingPlayerIndex === -1) {
+      // Only block new joiners when both slots are already filled.
+      // A second player who joined via HTTP (never emitted join_room before)
+      // must be allowed in even after gameStarted, as long as there is a free slot.
+      if (room.gameStarted && existingPlayerIndex === -1 && room.players.length >= 2) {
         return callback({ error: "Game already started" });
       }
 
@@ -83,7 +86,7 @@ const socketHandler = (io) => {
       });
 
       if (room.gameStarted) {
-        socket.emit("roomData", room);
+        io.to(roomId).emit("roomData", room);
       } else {
         io.to(roomId).emit("room_update", room);
       }
@@ -139,25 +142,46 @@ const socketHandler = (io) => {
     
     
     
+    socket.on("replay_request", ({ roomId, username }) => {
+      const room = rooms[roomId];
+      if (!room) return;
+
+      room.replayRequestBy = username;
+      io.to(roomId).emit("replay_invite", { invitedBy: username });
+    });
+
+    socket.on("replay_accept", ({ roomId }) => {
+      const room = rooms[roomId];
+      if (!room) return;
+
+      room.board = Array(9).fill("");
+      room.turn = "X";
+      room.winner = "";
+      room.replayRequestBy = null;
+
+      io.to(roomId).emit("roomData", room);
+    });
+
     socket.on("disconnect", () => {
 
       console.log("Disconnected:", socket.id);
 
       for (const roomId in rooms) {
+        const room = rooms[roomId];
+        const idx = room.players.findIndex(p => p.socketId === socket.id);
+        if (idx === -1) continue;
 
-        rooms[roomId].players =
-          rooms[roomId].players.filter(
-            (p) => p.socketId !== socket.id
-          );
-
-        
-        if (rooms[roomId].players.length === 0) {
-          delete rooms[roomId];
+        if (room.gameStarted) {
+          // Keep the player slot so they can rejoin mid-game.
+          room.players[idx].socketId = null;
+          io.to(roomId).emit("room_update", room);
         } else {
-          io.to(roomId).emit(
-            "room_update",
-            rooms[roomId]
-          );
+          room.players.splice(idx, 1);
+          if (room.players.length === 0) {
+            delete rooms[roomId];
+          } else {
+            io.to(roomId).emit("room_update", room);
+          }
         }
       }
     });

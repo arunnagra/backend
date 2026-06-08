@@ -48,7 +48,7 @@ const getLeaderboard = async (req, res) => {
       });
     });
 
-    // 3. Shape and sort. Sort by wins, then win rate, then matches played.
+    // 3. Shape and sort. Primary: win rate (desc), secondary: wins (desc), tertiary: matches played (desc).
     const leaderboard = users
       .map((user) => {
         const stats = statsByUser[user._id.toString()];
@@ -62,10 +62,10 @@ const getLeaderboard = async (req, res) => {
         };
       })
       .sort((a, b) => {
-        if (b.wins !== a.wins) return b.wins - a.wins;
         const aRate = a.matchesPlayed ? a.wins / a.matchesPlayed : 0;
         const bRate = b.matchesPlayed ? b.wins / b.matchesPlayed : 0;
         if (bRate !== aRate) return bRate - aRate;
+        if (b.wins !== a.wins) return b.wins - a.wins;
         return b.matchesPlayed - a.matchesPlayed;
       });
 

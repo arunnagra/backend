@@ -6,6 +6,8 @@ const Room = require("../models/Room");
 
 const authMiddleware = require("../middleware/authMiddleware");
 
+const { lobbyRooms } = require("../roomState");
+
 const generateRoomId = () => {
 
     return Math.random()
@@ -94,16 +96,17 @@ router.post("/join", authMiddleware, async (req, res) => {
     }
 });
 
-router.get("/available", authMiddleware, async (req, res) => {
+router.get("/available", authMiddleware, (req, res) => {
     try {
-        const rooms = await Room.find({
-            status: "waiting",
-            $or: [{ players: { $size: 0 } }, { players: { $size: 1 } }],
-        })
-            .populate("players", "username")
-            .sort({ createdAt: -1 });
+        const active = Object.values(lobbyRooms)
+            .filter((room) => !room.gameStarted && room.players.length < 2)
+            .map((room) => ({
+                roomId: room.roomId,
+                game: room.game,
+                players: room.players.map((p) => ({ username: p.username })),
+            }));
 
-        res.json(rooms);
+        res.json(active);
     } catch (error) {
         console.error("Available rooms error:", error.message);
         res.status(500).json({ msg: error.message });

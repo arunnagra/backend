@@ -5,6 +5,7 @@ const { Chess } = require("chess.js");
 
 const Match = require("./models/Match");
 const User = require("./models/User");
+const Room = require("./models/Room");
 
 const allowedOrigins = [
     process.env.CLIENT_URL,
@@ -26,7 +27,7 @@ const io = new Server(server, {
 });
 
 
-const lobbyRooms = {};
+const { lobbyRooms } = require("./roomState");
 const gameRooms = {};
 const chessRooms = {};
 const quizRooms = {};
@@ -103,7 +104,7 @@ io.on("connection", (socket) => {
             (player) => player.username === username
         );
 
-        if (room.gameStarted && room.game !== "chess" && !existingBySocket && !existingByUsername) {
+        if (room.gameStarted && room.game !== "chess" && !existingBySocket && !existingByUsername && room.players.length >= 2) {
             console.log("GAME ALREADY STARTED");
 
             if (typeof callback === "function") {
@@ -178,13 +179,17 @@ io.on("connection", (socket) => {
                 callback({ roomId, host: false, hostId: room.hostId, players: room.players, game: room.game });
             }
         } else if (room.game === "tic-tac-toe" && gameRooms[roomId]) {
+            const playerIdx = room.players.findIndex(p => p.username === username);
+            const symbol = playerIdx === 1 ? "O" : "X";
             socket.emit("roomData", gameRooms[roomId]);
             if (typeof callback === "function") {
-                callback({ roomId, host: false, hostId: room.hostId, players: room.players, game: room.game });
+                callback({ roomId, host: false, hostId: room.hostId, players: room.players, game: room.game, symbol });
             }
         } else {
+            const playerIdx = room.players.findIndex(p => p.username === username);
+            const symbol = playerIdx === 1 ? "O" : "X";
             if (typeof callback === "function") {
-                callback({ roomId, host: false, hostId: room.hostId, players: room.players, game: room.game });
+                callback({ roomId, host: false, hostId: room.hostId, players: room.players, game: room.game, symbol });
             }
         }
 
@@ -497,6 +502,23 @@ io.on("connection", (socket) => {
         io.emit("match_recorded", payload);
     });
 
+    socket.on("replay_request", ({ roomId, username }) => {
+        const room = gameRooms[roomId];
+        if (!room) return;
+        io.to(roomId).emit("replay_invite", { invitedBy: username });
+    });
+
+    socket.on("replay_accept", ({ roomId }) => {
+        const room = gameRooms[roomId];
+        if (!room) return;
+        room.board = Array(9).fill("");
+        room.turn = "X";
+        room.winner = "";
+        room.recorded = false;
+        room.symbolToUser = {};
+        io.to(roomId).emit("roomData", room);
+    });
+
 
     socket.on("chess_move", ({ roomId, move }, callback) => {
         console.log("Chess move received:", { roomId, move });
@@ -760,6 +782,30 @@ io.on("connection", (socket) => {
         }
     });
 
+    socket.on("quiz_replay_request", ({ roomId, username }) => {
+        if (quizRooms[roomId]) {
+            quizRooms[roomId].replayRequestBy = username;
+        }
+        // Relay unconditionally — don't gate on quizRooms existence
+        io.to(roomId).emit("quiz_replay_invite", { invitedBy: username });
+    });
+
+    socket.on("quiz_replay_accept", ({ roomId }) => {
+        let qr = quizRooms[roomId];
+        if (!qr) {
+            // Recover from in-memory loss (e.g. server hot-reload) using gameRooms
+            const gr = gameRooms[roomId];
+            if (!gr) return;
+            quizRooms[roomId] = { players: gr.players, scores: {}, finished: {} };
+            qr = quizRooms[roomId];
+        }
+        qr.scores = {};
+        qr.finished = {};
+        qr.replayRequestBy = null;
+        qr.players.forEach(p => { qr.scores[p.username] = 0; });
+        io.to(roomId).emit("quiz_start", { players: qr.players });
+    });
+
     socket.on("snake_roll", (payload) => {
         if (!payload || !payload.roomId) return;
         const sr = snakeRooms[payload.roomId];
@@ -794,29 +840,33 @@ io.on("connection", (socket) => {
 
         console.log("Disconnected:", socket.id);
 
-
         for (const roomId in lobbyRooms) {
+            const room = lobbyRooms[roomId];
+            const idx = room.players.findIndex(p => p.socketId === socket.id);
+            if (idx === -1) continue;
 
-            lobbyRooms[roomId].players =
-                lobbyRooms[roomId].players.filter(
-                    (p) => p.socketId !== socket.id
-                );
-
-            if (lobbyRooms[roomId].players.length === 0) {
-                delete lobbyRooms[roomId];
-                delete gameRooms[roomId];
-                delete chessRooms[roomId];
+            if (room.gameStarted) {
+                // Keep the slot so the player can rejoin mid-game.
+                room.players[idx].socketId = null;
+                io.to(roomId).emit("room_update", room);
             } else {
-                io.to(roomId).emit("room_update", lobbyRooms[roomId]);
+                room.players.splice(idx, 1);
+                if (room.players.length === 0) {
+                    delete lobbyRooms[roomId];
+                    delete gameRooms[roomId];
+                    delete chessRooms[roomId];
+                } else {
+                    io.to(roomId).emit("room_update", room);
+                }
             }
         }
 
-
         for (const roomId in gameRooms) {
-            gameRooms[roomId].players =
-                gameRooms[roomId].players?.filter(
-                    (p) => p.socketId !== socket.id
-                );
+            const gr = gameRooms[roomId];
+            const idx = gr.players?.findIndex(p => p.socketId === socket.id);
+            if (idx !== undefined && idx !== -1) {
+                gr.players[idx].socketId = null;
+            }
         }
 
         for (const roomId in chessRooms) {
@@ -868,4 +918,10 @@ function getChessGameState(chessRoom) {
 
 server.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on port ${PORT}`);
+    // Wipe all stale "waiting" rooms from the DB on every boot.
+    // Active rooms are tracked purely in-memory (lobbyRooms), so any
+    // DB room that survived a previous session is guaranteed to be dead.
+    Room.deleteMany({ status: "waiting" })
+        .then((r) => console.log(`Cleared ${r.deletedCount} stale room(s) from DB`))
+        .catch((err) => console.error("Room cleanup error:", err.message));
 });
