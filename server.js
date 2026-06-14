@@ -150,6 +150,17 @@ io.on("connection", (socket) => {
             }
         } else if (room.game === "memory-match" && gameRooms[roomId]?.cards) {
             const gr = gameRooms[roomId];
+            // Ensure joining player is in gameRoom and scores
+            const playerExists = gr.players.some(p => p.username === username);
+            if (!playerExists) {
+                gr.players.push({
+                    socketId: socket.id,
+                    username,
+                });
+            }
+            if (gr.scores[username] === undefined) {
+                gr.scores[username] = 0;
+            }
             socket.emit("memory_game_start", {
                 cards: gr.cards,
                 players: gr.players,
@@ -308,9 +319,11 @@ io.on("connection", (socket) => {
 
                 const memoryGameData = {
                     cards: gameCards,
-                    players: room.players.map(p => ({ username: p.username, score: 0 })),
+                    players: room.players,
                     currentTurn: 0,
                     currentPlayer: room.players[0]?.username,
+                    scores: gameRooms[roomId].scores,
+                    matched: [],
                 };
 
                 console.log("Emitting memory_game_start:", memoryGameData);
@@ -508,15 +521,117 @@ io.on("connection", (socket) => {
         io.to(roomId).emit("replay_invite", { invitedBy: username });
     });
 
+    socket.on("snake_replay_request", ({ roomId, username }) => {
+        const room = gameRooms[roomId];
+        if (!room || room.game !== "snake-ladder") return;
+        io.to(roomId).emit("snake_replay_invite", { invitedBy: username });
+    });
+
+    socket.on("memory_replay_request", ({ roomId, username }) => {
+        const room = gameRooms[roomId];
+        if (!room || room.game !== "memory-match") return;
+        io.to(roomId).emit("memory_replay_invite", { invitedBy: username });
+    });
+
+    socket.on("snake_replay_accept", ({ roomId }) => {
+        const room = gameRooms[roomId];
+        if (!room || room.game !== "snake-ladder") return;
+        snakeRooms[roomId] = {
+            players: room.players,
+            positions: {},
+            currentTurn: 0,
+        };
+        room.players.forEach(p => { snakeRooms[roomId].positions[p.username] = 1; });
+        io.to(roomId).emit("snake_game_start", {
+            players: room.players,
+            positions: snakeRooms[roomId].positions,
+            currentPlayer: room.players[0]?.username,
+        });
+        io.to(roomId).emit("snake_replay_started", {
+            roomId,
+            started: true,
+        });
+    });
+
     socket.on("replay_accept", ({ roomId }) => {
         const room = gameRooms[roomId];
         if (!room) return;
+
+        if (room.game === "memory-match") {
+            const cardIcons = ["🎮", "🎯", "🚀", "⚽", "🏆", "🎲", "🧠", "🔥"];
+            room.cards = [...cardIcons, ...cardIcons]
+                .sort(() => Math.random() - 0.5)
+                .map((icon, idx) => ({ id: idx, icon }));
+            room.matched = [];
+            room.flipped = [];
+            room.currentTurn = 0;
+            room.scores = {};
+            room.players.forEach((p) => {
+                room.scores[p.username] = 0;
+            });
+            room.gameState = "active";
+            room.moves = 0;
+
+            io.to(roomId).emit("memory_game_start", {
+                cards: room.cards,
+                players: room.players,
+                currentPlayer: room.players[0]?.username,
+                scores: room.scores,
+                matched: [],
+            });
+            return;
+        }
+
+        if (room.game === "snake-ladder") {
+            snakeRooms[roomId] = {
+                players: room.players,
+                positions: {},
+                currentTurn: 0,
+            };
+            room.players.forEach(p => { snakeRooms[roomId].positions[p.username] = 1; });
+            io.to(roomId).emit("snake_game_start", {
+                players: room.players,
+                positions: snakeRooms[roomId].positions,
+                currentPlayer: room.players[0]?.username,
+            });
+            io.to(roomId).emit("snake_replay_started", { roomId, started: true });
+            io.to(roomId).emit("replay_started", { roomId, started: true });
+            return;
+        }
+
         room.board = Array(9).fill("");
         room.turn = "X";
         room.winner = "";
         room.recorded = false;
         room.symbolToUser = {};
         io.to(roomId).emit("roomData", room);
+    });
+
+    socket.on("memory_replay_accept", ({ roomId }) => {
+        const room = gameRooms[roomId];
+        if (!room || room.game !== "memory-match") return;
+
+        const cardIcons = ["🎮", "🎯", "🚀", "⚽", "🏆", "🎲", "🧠", "🔥"];
+        room.cards = [...cardIcons, ...cardIcons]
+            .sort(() => Math.random() - 0.5)
+            .map((icon, idx) => ({ id: idx, icon }));
+        room.matched = [];
+        room.flipped = [];
+        room.currentTurn = 0;
+        room.scores = {};
+        room.players.forEach((p) => {
+            room.scores[p.username] = 0;
+        });
+        room.gameState = "active";
+        room.moves = 0;
+
+        io.to(roomId).emit("memory_game_start", {
+            cards: room.cards,
+            players: room.players,
+            currentPlayer: room.players[0]?.username,
+            scores: room.scores,
+            matched: [],
+        });
     });
 
 
@@ -714,12 +829,13 @@ io.on("connection", (socket) => {
 
                     // Check if game over
                     if (room.matched.length === room.cards.length) {
-                        const winner = Object.entries(room.scores).reduce((a, b) =>
-                            a[1] > b[1] ? a : b
-                        );
+                        const scoreEntries = Object.entries(room.scores);
+                        const maxScore = Math.max(...scoreEntries.map(([, sc]) => sc));
+                        const winners = scoreEntries.filter(([, sc]) => sc === maxScore).map(([name]) => name);
+                        const winnerValue = winners.length > 1 ? "DRAW" : winners[0];
 
                         io.to(roomId).emit("memory_game_over", {
-                            winner: winner[0],
+                            winner: winnerValue,
                             scores: room.scores,
                         });
 
@@ -756,6 +872,48 @@ io.on("connection", (socket) => {
         }
     });
 
+    socket.on("memory_replay_request", ({ roomId, username }) => {
+        const room = gameRooms[roomId];
+        if (!room || room.game !== "memory-match") return;
+
+        room.replayRequestBy = username;
+        io.to(roomId).emit("memory_replay_invite", { invitedBy: username });
+    });
+
+    socket.on("memory_replay_accept", ({ roomId }) => {
+        let room = gameRooms[roomId];
+        if (!room || room.game !== "memory-match") return;
+
+        // Reset game state
+        const cardIcons = ["🎮", "🎯", "🚀", "⚽", "🏆", "🎲", "🧠", "🔥"];
+        const gameCards = [...cardIcons, ...cardIcons]
+            .sort(() => Math.random() - 0.5)
+            .map((icon, idx) => ({ id: idx, icon }));
+
+        room.cards = gameCards;
+        room.matched = [];
+        room.flipped = [];
+        room.currentTurn = 0;
+        room.gameState = "active";
+        room.replayRequestBy = null;
+
+        // Reset scores
+        room.players.forEach(p => {
+            room.scores[p.username] = 0;
+        });
+
+        const memoryGameData = {
+            cards: gameCards,
+            players: room.players,
+            currentTurn: 0,
+            currentPlayer: room.players[0]?.username,
+            scores: room.scores,
+            matched: [],
+        };
+
+        console.log("Emitting memory_game_start for replay:", memoryGameData);
+        io.to(roomId).emit("memory_game_start", memoryGameData);
+    });
 
     socket.on("quiz_answer", (payload) => {
         if (!payload || !payload.roomId) return;

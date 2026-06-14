@@ -10,8 +10,16 @@ const authMiddleware = require("../middleware/authMiddleware");
 
 const sendEmail = require("../utils/sendEmail");
 
-
 let registerOtpStore = {};
+
+const verifyActiveToken = (token) => {
+  try {
+    jwt.verify(token, process.env.JWT_SECRET);
+    return true;
+  } catch (error) {
+    return false;
+  }
+};
 
 
 
@@ -133,6 +141,9 @@ router.post(
         }
       );
 
+      user.currentToken = token;
+      await user.save();
+
       res.status(201).json({
         success: true,
         msg: "Signup successful",
@@ -197,6 +208,13 @@ router.post("/login", async (req, res) => {
       });
     }
 
+    if (user.currentToken && verifyActiveToken(user.currentToken)) {
+      return res.status(400).json({
+        success: false,
+        msg: "User already logged in from another screen",
+      });
+    }
+
     const token = jwt.sign(
       {
         id: user._id,
@@ -206,6 +224,9 @@ router.post("/login", async (req, res) => {
         expiresIn: "7d",
       }
     );
+
+    user.currentToken = token;
+    await user.save();
 
     res.status(200).json({
       success: true,
@@ -233,6 +254,36 @@ router.post("/login", async (req, res) => {
 
 
 
+
+router.post(
+  "/logout",
+  authMiddleware,
+  async (req, res) => {
+    try {
+      const user = await User.findById(req.user.id);
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          msg: "User not found",
+        });
+      }
+
+      user.currentToken = null;
+      await user.save();
+
+      res.status(200).json({
+        success: true,
+        msg: "Logout successful",
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        msg: error.message,
+      });
+    }
+  }
+);
 
 router.get(
   "/profile",
