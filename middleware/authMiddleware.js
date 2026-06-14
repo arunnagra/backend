@@ -18,13 +18,16 @@ module.exports = async function (req, res, next) {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         const user = await User.findById(decoded.id);
 
-        if (!user || !user.currentToken) {
+        if (!user) {
             return res.status(401).json({
                 msg: "Token is not valid",
             });
         }
 
-        if (user.currentToken !== token) {
+        // If a currentToken is stored for the user, enforce single-session
+        // validation. If it's missing (e.g. older user doc), allow the valid
+        // JWT to proceed so users aren't unexpectedly blocked.
+        if (user.currentToken && user.currentToken !== token) {
             return res.status(401).json({
                 msg: "Session invalid or user logged in from another screen",
             });
