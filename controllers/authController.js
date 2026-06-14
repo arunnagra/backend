@@ -133,6 +133,9 @@ exports.verifySignupOtp = async (
       }
     );
 
+    user.currentToken = token;
+    await user.save();
+
     res.status(201).json({
       success: true,
       msg: "Registration successful",
@@ -205,6 +208,9 @@ exports.login = async (req, res) => {
         expiresIn: "1d",
       }
     );
+
+    user.currentToken = token;
+    await user.save();
 
     res.status(200).json({
       success: true,
@@ -319,6 +325,9 @@ exports.verifyLoginOtp = async (
         expiresIn: "1d",
       }
     );
+
+    user.currentToken = token;
+    await user.save();
 
     res.status(200).json({
       success: true,
