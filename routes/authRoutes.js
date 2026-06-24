@@ -12,15 +12,6 @@ const sendEmail = require("../utils/sendEmail");
 
 let registerOtpStore = {};
 
-const verifyActiveToken = (token) => {
-  try {
-    jwt.verify(token, process.env.JWT_SECRET);
-    return true;
-  } catch (error) {
-    return false;
-  }
-};
-
 
 
 
@@ -141,9 +132,6 @@ router.post(
         }
       );
 
-      user.currentToken = token;
-      await user.save();
-
       res.status(201).json({
         success: true,
         msg: "Signup successful",
@@ -174,10 +162,12 @@ router.post(
 
 router.post("/login", async (req, res) => {
   try {
-    const { email, password } =
-      req.body;
+    const { email, password } = req.body;
+
+    console.log("[/api/auth/login] Request body:", { emailPresent: !!email, passwordPresent: !!password });
 
     if (!email || !password) {
+      console.warn("[/api/auth/login] Missing fields", { body: req.body });
       return res.status(400).json({
         success: false,
         msg: "Please provide email and password",
@@ -189,6 +179,7 @@ router.post("/login", async (req, res) => {
     });
 
     if (!user) {
+      console.warn("[/api/auth/login] User not found for email", email);
       return res.status(400).json({
         success: false,
         msg: "User not found",
@@ -202,16 +193,10 @@ router.post("/login", async (req, res) => {
       );
 
     if (!isMatch) {
+      console.warn("[/api/auth/login] Invalid password attempt for", email);
       return res.status(400).json({
         success: false,
         msg: "Invalid credentials",
-      });
-    }
-
-    if (user.currentToken && verifyActiveToken(user.currentToken)) {
-      return res.status(400).json({
-        success: false,
-        msg: "User already logged in from another screen",
       });
     }
 
@@ -224,9 +209,6 @@ router.post("/login", async (req, res) => {
         expiresIn: "7d",
       }
     );
-
-    user.currentToken = token;
-    await user.save();
 
     res.status(200).json({
       success: true,
@@ -268,9 +250,6 @@ router.post(
           msg: "User not found",
         });
       }
-
-      user.currentToken = null;
-      await user.save();
 
       res.status(200).json({
         success: true,
