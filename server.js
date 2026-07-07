@@ -26,6 +26,13 @@ const io = new Server(server, {
     },
 });
 
+const createSystemMessage = (text) => ({
+    id: `${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    type: "system",
+    sender: "SYSTEM",
+    text,
+    timestamp: new Date().toISOString(),
+});
 
 const { lobbyRooms } = require("./roomState");
 const gameRooms = {};
@@ -57,6 +64,10 @@ io.on("connection", (socket) => {
                 },
             ],
             gameStarted: false,
+            chat: [
+                createSystemMessage(`Room created by ${username}. Welcome!`),
+                createSystemMessage("Type a message below to chat with your opponent."),
+            ],
         };
 
         socket.join(resolvedRoomId);
@@ -131,6 +142,7 @@ io.on("connection", (socket) => {
                 socketId: socket.id,
                 username,
             });
+            room.chat.push(createSystemMessage(`${username} joined the room.`));
         }
 
         console.log("PLAYER JOINED:", username);
@@ -205,11 +217,71 @@ io.on("connection", (socket) => {
         }
 
         io.to(roomId).emit("room_update", room);
+        io.to(roomId).emit("chat_update", {
+            roomId,
+            chat: (room.chat || []).slice(-50),
+        });
 
         console.log("ROOM UPDATE SENT");
         console.log("================================");
     });
 
+    socket.on("send_chat_message", ({ roomId, username, text }, callback) => {
+        const room = lobbyRooms[roomId] || gameRooms[roomId];
+        if (!room) {
+            if (typeof callback === "function") {
+                return callback({ error: "Room not found" });
+            }
+            return;
+        }
+
+        const message = {
+            id: `${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            type: "user",
+            sender: username,
+            text: text?.trim() || "",
+            timestamp: new Date().toISOString(),
+        };
+
+        if (!message.text) {
+            if (typeof callback === "function") {
+                return callback({ error: "Message cannot be empty" });
+            }
+            return;
+        }
+
+        room.chat = room.chat || [];
+        room.chat.push(message);
+
+        if (lobbyRooms[roomId]) {
+            lobbyRooms[roomId].chat = room.chat;
+        }
+        if (gameRooms[roomId]) {
+            gameRooms[roomId].chat = room.chat;
+        }
+
+        const chatPayload = {
+            roomId,
+            chat: room.chat.slice(-50),
+        };
+
+        io.to(roomId).emit("chat_update", chatPayload);
+        socket.emit("chat_update", chatPayload);
+
+        if (typeof callback === "function") {
+            callback({ success: true, message });
+        }
+    });
+
+    socket.on("typing", ({ roomId, username }) => {
+        if (!roomId || !username) return;
+        io.to(roomId).emit("typing", { username });
+    });
+
+    socket.on("stop_typing", ({ roomId, username }) => {
+        if (!roomId || !username) return;
+        io.to(roomId).emit("stop_typing", { username });
+    });
 
     socket.on("start_game", ({ roomId }, callback) => {
 
@@ -1003,10 +1075,19 @@ io.on("connection", (socket) => {
             const idx = room.players.findIndex(p => p.socketId === socket.id);
             if (idx === -1) continue;
 
+            const player = room.players[idx];
+            const username = player?.username || "A player";
+            room.chat = room.chat || [];
+            room.chat.push(createSystemMessage(`${username} left the room.`));
+
             if (room.gameStarted) {
                 // Keep the slot so the player can rejoin mid-game.
                 room.players[idx].socketId = null;
                 io.to(roomId).emit("room_update", room);
+                io.to(roomId).emit("chat_update", {
+                    roomId,
+                    chat: room.chat.slice(-50),
+                });
             } else {
                 room.players.splice(idx, 1);
                 if (room.players.length === 0) {
@@ -1015,6 +1096,10 @@ io.on("connection", (socket) => {
                     delete chessRooms[roomId];
                 } else {
                     io.to(roomId).emit("room_update", room);
+                    io.to(roomId).emit("chat_update", {
+                        roomId,
+                        chat: room.chat.slice(-50),
+                    });
                 }
             }
         }

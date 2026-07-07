@@ -10,9 +10,6 @@ let registerOtpStore = {};
 let loginOtpStore = {};
 
 
-
-
-
 exports.signup = async (req, res) => {
   try {
     const { username, email, password } = req.body;
@@ -84,10 +81,6 @@ exports.signup = async (req, res) => {
   }
 };
 
-
-
-
-
 exports.verifySignupOtp = async (
   req,
   res
@@ -155,10 +148,6 @@ exports.verifySignupOtp = async (
     });
   }
 };
-
-
-
-
 
 exports.login = async (req, res) => {
   try {
@@ -230,10 +219,6 @@ exports.login = async (req, res) => {
   }
 };
 
-
-
-
-
 exports.sendLoginOtp = async (
   req,
   res
@@ -276,11 +261,7 @@ exports.sendLoginOtp = async (
     });
   }
 };
-
-
-
-
-
+tgrfedwsa
 exports.verifyLoginOtp = async (
   req,
   res
