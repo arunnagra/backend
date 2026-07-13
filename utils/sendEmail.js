@@ -1,6 +1,6 @@
 const sgMail = require("@sendgrid/mail");
 
-const sendEmail = async (email, otp) => {
+const sendEmail = async (email, otp, purpose = "verify your email") => {
   if (!process.env.SENDGRID_API_KEY) {
     throw new Error("SENDGRID_API_KEY is not configured. Add it to .env");
   }
@@ -11,10 +11,13 @@ const sendEmail = async (email, otp) => {
     const msg = {
       to: email,
       from: process.env.SENDGRID_FROM_EMAIL || "noreply@gamesphere.com",
-      subject: "GameSphere - OTP Verification",
+      subject:
+        purpose === "reset your password"
+          ? "GameSphere - Password Reset OTP"
+          : "GameSphere - OTP Verification",
       html: `
         <h2>Your OTP Code</h2>
-        <p>Enter this code to verify your email:</p>
+        <p>Enter this code to ${purpose}:</p>
         <h1 style="color: #007bff;">${otp}</h1>
         <p>This code expires in 5 minutes.</p>
       `,
