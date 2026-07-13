@@ -12,13 +12,14 @@ const sendEmail = require("../utils/sendEmail");
 
 let registerOtpStore = {};
 
-
+let resetOtpStore = {};
 
 
 
 router.post("/register", async (req, res) => {
   try {
-    const { username, email, password } = req.body;
+    const { username, password } = req.body;
+    const email = req.body.email?.trim().toLowerCase();
 
     if (!username || !email || !password) {
       return res.status(400).json({
@@ -27,7 +28,7 @@ router.post("/register", async (req, res) => {
       });
     }
 
-    
+
     const existingEmail = await User.findOne({
       email,
     });
@@ -39,7 +40,7 @@ router.post("/register", async (req, res) => {
       });
     }
 
-    
+
     const existingUsername = await User.findOne({
       username,
     });
@@ -233,9 +234,101 @@ router.post("/login", async (req, res) => {
   }
 });
 
+router.post("/forgot-password", async (req, res) => {
+  try {
+    const { email } = req.body;
 
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        msg: "Email is required",
+      });
+    }
 
+    const user = await User.findOne({
+      email: email.toLowerCase(),
+    });
 
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        msg: "User not found",
+      });
+    }
+
+    const otp = otpGenerator.generate(6, {
+      upperCaseAlphabets: false,
+      lowerCaseAlphabets: false,
+      specialChars: false,
+    });
+
+    resetOtpStore[email.toLowerCase()] = {
+      otp,
+      expiresAt: Date.now() + 5 * 60 * 1000,
+    };
+
+    await sendEmail(email, otp, "reset your password");
+
+    res.json({
+      success: true,
+      msg: "OTP sent successfully",
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      msg: error.message,
+    });
+  }
+});
+
+router.post("/reset-password", async (req, res) => {
+  try {
+    const { email, otp, password } = req.body;
+
+    const stored = resetOtpStore[email.toLowerCase()];
+
+    if (!stored) {
+      return res.status(400).json({
+        success: false,
+        msg: "OTP not found",
+      });
+    }
+
+    if (Date.now() > stored.expiresAt) {
+      delete resetOtpStore[email.toLowerCase()];
+      return res.status(400).json({
+        success: false,
+        msg: "OTP expired",
+      });
+    }
+
+    if (stored.otp !== otp) {
+      return res.status(400).json({
+        success: false,
+        msg: "Invalid OTP",
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    await User.findOneAndUpdate(
+      { email: email.toLowerCase() },
+      { password: hashedPassword }
+    );
+
+    delete resetOtpStore[email.toLowerCase()];
+
+    res.json({
+      success: true,
+      msg: "Password reset successful",
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      msg: error.message,
+    });
+  }
+});
 
 router.post(
   "/logout",
